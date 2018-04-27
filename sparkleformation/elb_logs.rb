@@ -63,14 +63,14 @@ SparkleFormation.new(:s3elblogs, :provider => :aws).load(:base).overrides do
             }
           )
         end
-      # notification_configuration do
-      #   lambda_configurations _array(
-      #     -> {
-      #       event 's3:ObjectCreated:*'
-      #       function attr!(:elb_logs_lambda, 'Arn')
-      #     }
-      #   )
-      # end
+      notification_configuration do
+        lambda_configurations _array(
+          -> {
+            event 's3:ObjectCreated:*'
+            function attr!(:elb_logs_lambda, 'Arn')
+          }
+        )
+      end
       end
   end
 
