@@ -19,6 +19,11 @@ SparkleFormation.new(:s3elblogs, :provider => :aws).load(:base).overrides do
       description 'S3 Bucket Lifecycle Expiration in Days'
       default 10
     end
+    user_id do
+      type 'String'
+      descrption 'AWS Account ID'
+      default account_id
+    end
   end
 
   mappings.policy_principal do
@@ -30,7 +35,7 @@ SparkleFormation.new(:s3elblogs, :provider => :aws).load(:base).overrides do
     type 'AWS::S3::Bucket'
       properties do
         bucket_name join!([ref!(:bucket_name), ref!(:namespace)], options: {delimiter: '-'})
-        tags array!(
+        tags _array(
           -> {
             key "Name"
             value join!([ref!(:bucket_name), ref!(:namespace)], options: {delimiter: '-'})
@@ -52,12 +57,20 @@ SparkleFormation.new(:s3elblogs, :provider => :aws).load(:base).overrides do
               prefix ""
               transition do
                 storageClass "GLACIER"
-                transitionInDays ref!(:log_trans_glacier)
+                transition_in_days ref!(:log_trans_glacier)
               end
-              expirationInDays ref!(:log_expire_days)
+              expiration_in_days ref!(:log_expire_days)
             }
           )
         end
+      # notification_configuration do
+      #   lambda_configurations _array(
+      #     -> {
+      #       event 's3:ObjectCreated:*'
+      #       function attr!(:elb_logs_lambda, 'Arn')
+      #     }
+      #   )
+      # end
       end
   end
 
@@ -65,7 +78,7 @@ SparkleFormation.new(:s3elblogs, :provider => :aws).load(:base).overrides do
     type 'AWS::S3::BucketPolicy'
       properties do
         bucket join!([ref!(:bucket_name), ref!(:namespace)], options: {delimiter: '-'})
-          policyDocument do
+          policy_document do
             id join!([ref!(:bucket_name), ref!(:namespace), "policy"], options: {delimiter: '-'})
             version '2012-10-17'
             statement _array(
@@ -75,7 +88,7 @@ SparkleFormation.new(:s3elblogs, :provider => :aws).load(:base).overrides do
                   's3:PutObject'
                   )
                 effect 'Allow'
-                resource join!(['arn:aws:s3:::', ref!(:bucket_name), '-', ref!(:namespace), '/*'], options: {delimiter: ''})
+                resource join!(['arn:aws:s3:::', ref!(:bucket_name), '-', ref!(:namespace), '/AWSLogs/', ref!(:user_id), '/', ], options: {delimiter: ''})
                 principal do
                   a_w_s _array(
                     map!(:policy_principal, region!, :elb_account_id)
@@ -87,18 +100,84 @@ SparkleFormation.new(:s3elblogs, :provider => :aws).load(:base).overrides do
       end
   end
 
+  resources.elb_logs_lambda_role do
+    type 'AWS::IAM::Role'
+    properties do
+      role_name join!([ref!(:bucket_name), ref!(:namespace), "policy"], options: {delimiter: '-'})
+      managed_policy_arns _array(
+        'arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole'
+      )
+      assume_role_policy_document do
+        version '2012-10-17'
+        statement _array(
+            -> {
+              effect 'Allow'
+              principal do
+                service _array(
+                    'lambda.amazonaws.com'
+                )
+              end
+              action _array(
+                'sts:AssumeRole'
+              )
+            }
+          )
+        end
+      end
+  end
+
+  resources.elb_logs_lambda_permissions do
+    type 'AWS::Lambda::Permission'
+    properties do
+      action 'lambda:InvokeFunction'
+      function_name attr!(:elb_logs_lambda, 'Arn')
+      principal 's3.amazonaws.com'
+      source_account ref!(:user_id)
+      source_arn join!(['arn', 'aws', 's3', '', '', ref!(:elb_logs_s3)], options: {delimiter: ':'})
+    end
+  end
+
+  resources.elb_logs_lambda do
+    type 'AWS::Lambda::Function'
+      properties do
+        code do
+          zipFile 'elblog-lambda.zip'
+        end
+        function_name join!([ref!(:bucket_name), ref!(:namespace)], options: {delimiter: '-'})
+        handler 'index.exports'
+        memory_size '128'
+        timeout '3'
+        runtime 'nodejs4.3'
+        role join!(['arn:aws:iam::', ref!(:user_id), ':role/lambda-elb-logs'], options: {delimiter: ''})
+        tags array!(
+          -> {
+            key "Name"
+            value join!([ref!(:bucket_name), ref!(:namespace)], options: {delimiter: '-'})
+          },
+          -> {
+            key "Namespace"
+            value ref!(:namespace)
+          },
+          -> {
+            key "Env"
+            value "dev"
+          }
+        )
+      end
+  end
+
   outputs do
+    Region do
+      value region!
+    end
     WebsiteURL do
       value attr!("elb_logs_s3".to_sym, :WebsiteURL)
     end
     DomainName do
       value attr!("elb_logs_s3".to_sym, :DomainName)
     end
-    ARN_S3 do
+    ARN do
       value attr!("elb_logs_s3".to_sym, :Arn)
-    end
-    ARN_S3_POLICY do
-      value attr!("elb_logs_s3_policy".to_sym, :Arn)
     end
   end
 
