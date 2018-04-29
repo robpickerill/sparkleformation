@@ -24,6 +24,16 @@ SparkleFormation.new(:s3elblogs, :provider => :aws).load(:base).overrides do
       descrption 'AWS Account ID'
       default account_id
     end
+    s3_lambda_bucket do
+      type 'String'
+      description 'Lambda function bucket'
+      default 'elb-logs-lambda'
+    end
+    s3_lambda_key do
+      type 'String'
+      description 'Lamba function file'
+      default 'elblog-lambda.zip'
+    end
   end
 
   mappings.policy_principal do
@@ -133,18 +143,19 @@ SparkleFormation.new(:s3elblogs, :provider => :aws).load(:base).overrides do
       function_name attr!(:elb_logs_lambda, 'Arn')
       principal 's3.amazonaws.com'
       source_account ref!(:user_id)
-      source_arn join!(['arn', 'aws', 's3', '', '', ref!(:elb_logs_s3)], options: {delimiter: ':'})
+      source_arn 'arn:aws:s3:::' + join!([ref!(:elb_logs_s3), ref!('AWS::StackName')], options: {delimiter: '.'})
     end
-  end
+   end
 
   resources.elb_logs_lambda do
     type 'AWS::Lambda::Function'
       properties do
         code do
-          zipFile 'elblog-lambda.zip'
+          s3_bucket ref!(:s3_lambda_bucket)
+          s3_key ref!(:s3_lambda_key)
         end
         function_name join!([ref!(:bucket_name), ref!(:namespace)], options: {delimiter: '-'})
-        handler 'index.exports'
+        handler 'index.handler'
         memory_size '128'
         timeout '3'
         runtime 'nodejs4.3'
